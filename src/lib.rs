@@ -8,6 +8,7 @@ pub use snapshot::{Chunks, Iter, SegmentSlice, Snapshot};
 #[cfg(test)]
 mod tests {
     use crate::log::AtomicLog;
+    use crate::Snapshot;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
@@ -16,7 +17,7 @@ mod tests {
     fn empty_snapshot_is_empty() {
         let (_writer, log) = AtomicLog::<usize>::new(4, 2);
 
-        let snapshot = log.snapshot(10);
+        let snapshot = log.snapshot();
 
         assert!(snapshot.is_empty());
         assert_eq!(snapshot.len(), 0);
@@ -24,31 +25,31 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_returns_latest_contiguous_suffix() {
+    fn snapshot_returns_full_retained_view() {
         let (mut writer, log) = AtomicLog::new(5, 2);
 
         for value in 0..8 {
             writer.append(value);
         }
 
-        let snapshot = log.snapshot(10);
+        let snapshot = log.snapshot();
         let values: Vec<_> = snapshot.iter().copied().collect();
 
-        assert_eq!(values, vec![3, 4, 5, 6, 7]);
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
-    fn snapshot_can_request_less_than_retained_capacity() {
+    fn snapshot_captures_full_retained_view() {
         let (mut writer, log) = AtomicLog::new(8, 3);
 
         for value in 0..7 {
             writer.append(value);
         }
 
-        let snapshot = log.snapshot(4);
+        let snapshot = log.snapshot();
         let values: Vec<_> = snapshot.iter().copied().collect();
 
-        assert_eq!(values, vec![3, 4, 5, 6]);
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6]);
     }
 
     #[test]
@@ -60,7 +61,7 @@ mod tests {
         }
 
         let chunks: Vec<_> = log
-            .snapshot(6)
+            .snapshot()
             .chunks()
             .map(|chunk| (chunk.sequence(), chunk.values().to_vec()))
             .collect();
@@ -74,17 +75,17 @@ mod tests {
         for value in 0..3 {
             writer.append(value);
         }
-        let snapshot = log.snapshot(3);
+        let snapshot = log.snapshot();
 
         for value in 3..20 {
             writer.append(value);
         }
 
         let old_values: Vec<_> = snapshot.iter().copied().collect();
-        let fresh_values: Vec<_> = log.snapshot(3).iter().copied().collect();
+        let fresh_values: Vec<_> = log.snapshot().iter().copied().collect();
 
         assert_eq!(old_values, vec![0, 1, 2]);
-        assert_eq!(fresh_values, vec![17, 18, 19]);
+        assert_eq!(fresh_values, vec![16, 17, 18, 19]);
     }
 
     #[test]
@@ -93,7 +94,7 @@ mod tests {
         for value in 0..4 {
             writer.append(value);
         }
-        let mut snapshot = log.snapshot(3);
+        let mut snapshot = log.snapshot();
 
         for value in 4..9 {
             writer.append(value);
@@ -101,7 +102,7 @@ mod tests {
         snapshot.refresh();
 
         let values: Vec<_> = snapshot.iter().copied().collect();
-        assert_eq!(values, vec![6, 7, 8]);
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
@@ -109,14 +110,14 @@ mod tests {
         let (mut writer, log) = AtomicLog::new(4, 8);
         writer.append(0);
         writer.append(1);
-        let mut snapshot = log.snapshot(3);
+        let mut snapshot = log.snapshot();
 
         writer.append(2);
         writer.append(3);
         snapshot.refresh();
 
         let values: Vec<_> = snapshot.iter().copied().collect();
-        assert_eq!(values, vec![1, 2, 3]);
+        assert_eq!(values, vec![0, 1, 2, 3]);
         assert_eq!(snapshot.chunks().count(), 1);
     }
 
@@ -126,7 +127,7 @@ mod tests {
         for value in 0..3 {
             writer.append(value);
         }
-        let mut snapshot = log.snapshot(5);
+        let mut snapshot = log.snapshot();
 
         for value in 3..6 {
             writer.append(value);
@@ -134,7 +135,7 @@ mod tests {
         snapshot.refresh();
 
         let values: Vec<_> = snapshot.iter().copied().collect();
-        assert_eq!(values, vec![1, 2, 3, 4, 5]);
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5]);
         assert_eq!(snapshot.chunks().count(), 3);
     }
 
@@ -171,7 +172,7 @@ mod tests {
             let stop = Arc::clone(&stop);
             readers.push(thread::spawn(move || {
                 while stop.load(Ordering::Acquire) == 0 {
-                    let values: Vec<_> = log.snapshot(32).iter().copied().collect();
+                    let values: Vec<_> = log.snapshot().iter().copied().collect();
                     assert!(values.windows(2).all(|pair| pair[0] + 1 == pair[1]));
                 }
             }));
@@ -204,9 +205,29 @@ mod tests {
         first.join().unwrap();
         second.join().unwrap();
 
-        let values: Vec<_> = log.snapshot(8).iter().copied().collect();
+        let values: Vec<_> = log.snapshot().iter().copied().collect();
         assert_eq!(values.len(), 2);
         assert!(values.contains(&1));
         assert!(values.contains(&2));
+    }
+
+    #[test]
+    fn log_snapshot_and_writer_conversions_round_trip() {
+        let (mut writer, log) = AtomicLog::new(8, 2);
+        for value in 0..5 {
+            writer.append(value);
+        }
+
+        let log_from_writer = writer.log();
+        let snapshot = Snapshot::from(log_from_writer.clone());
+        let log_from_snapshot = AtomicLog::from(snapshot);
+
+        let values: Vec<_> = log_from_snapshot.snapshot().iter().copied().collect();
+        assert_eq!(values, vec![0, 1, 2, 3, 4]);
+
+        let snapshot = log.snapshot();
+        let cloned_log = snapshot.log();
+        let values: Vec<_> = cloned_log.snapshot().iter().copied().collect();
+        assert_eq!(values, vec![0, 1, 2, 3, 4]);
     }
 }

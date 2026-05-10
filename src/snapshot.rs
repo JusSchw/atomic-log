@@ -1,4 +1,3 @@
-use std::cmp::min;
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;
@@ -8,7 +7,6 @@ use crate::segment::Segment;
 
 pub struct Snapshot<T> {
     pub(crate) shared: Arc<Shared<T>>,
-    target_len: usize,
     len: usize,
     chunks: VecDeque<SnapshotChunk<T>>,
 }
@@ -33,10 +31,9 @@ pub struct Chunks<'a, T> {
 }
 
 impl<T> Snapshot<T> {
-    pub(crate) fn new(shared: Arc<Shared<T>>, target_len: usize) -> Self {
+    pub(crate) fn new(shared: Arc<Shared<T>>) -> Self {
         let mut snapshot = Self {
             shared,
-            target_len,
             len: 0,
             chunks: VecDeque::new(),
         };
@@ -46,22 +43,16 @@ impl<T> Snapshot<T> {
 
     fn rebuild(&mut self) {
         let head = self.shared.head.load_full();
-        let mut remaining = self.target_len;
         let mut reversed = Vec::new();
         let mut cursor = Some(head);
 
-        while remaining > 0 {
-            let Some(segment) = cursor else {
-                break;
-            };
+        while let Some(segment) = cursor {
             let published = segment.published_len();
             if published > 0 {
-                let take = min(published, remaining);
                 reversed.push(SnapshotChunk {
                     segment: Arc::clone(&segment),
-                    range: published - take..published,
+                    range: 0..published,
                 });
-                remaining -= take;
             }
             cursor = segment.previous.upgrade();
         }
@@ -104,7 +95,6 @@ impl<T> Snapshot<T> {
         let added = published - last.range.end;
         last.range.end = published;
         self.len += added;
-        self.trim_front_to_target();
         true
     }
 
@@ -134,7 +124,6 @@ impl<T> Snapshot<T> {
                         });
                     }
                 }
-                self.trim_front_to_target();
                 return true;
             }
 
@@ -143,26 +132,6 @@ impl<T> Snapshot<T> {
         }
 
         false
-    }
-
-    fn trim_front_to_target(&mut self) {
-        while self.len > self.target_len {
-            let excess = self.len - self.target_len;
-            let Some(front) = self.chunks.front_mut() else {
-                self.len = 0;
-                break;
-            };
-
-            let front_len = front.range.end - front.range.start;
-            if excess < front_len {
-                front.range.start += excess;
-                self.len -= excess;
-                break;
-            }
-
-            self.len -= front_len;
-            self.chunks.pop_front();
-        }
     }
 
     pub fn len(&self) -> usize {
@@ -183,6 +152,12 @@ impl<T> Snapshot<T> {
     pub fn chunks(&self) -> Chunks<'_, T> {
         Chunks {
             chunks: self.chunks.iter(),
+        }
+    }
+
+    pub fn log(&self) -> crate::log::AtomicLog<T> {
+        crate::log::AtomicLog {
+            shared: Arc::clone(&self.shared),
         }
     }
 }
@@ -248,10 +223,21 @@ impl<T> SnapshotChunk<T> {
 impl<T> std::fmt::Debug for Snapshot<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Snapshot")
-            .field("target_len", &self.target_len)
             .field("len", &self.len)
             .field("chunks", &self.chunks.len())
             .finish()
+    }
+}
+
+impl<T> From<crate::log::AtomicLog<T>> for Snapshot<T> {
+    fn from(log: crate::log::AtomicLog<T>) -> Self {
+        log.snapshot()
+    }
+}
+
+impl<T> From<Snapshot<T>> for crate::log::AtomicLog<T> {
+    fn from(snapshot: Snapshot<T>) -> Self {
+        snapshot.log()
     }
 }
 

@@ -1,4 +1,3 @@
-use std::cmp::min;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -7,7 +6,6 @@ use arc_swap::ArcSwap;
 use crate::segment::Segment;
 use crate::snapshot::Snapshot;
 
-#[derive(Clone)]
 pub struct AtomicLog<T> {
     pub(crate) shared: Arc<Shared<T>>,
 }
@@ -27,6 +25,20 @@ pub(crate) struct WriterState<T> {
     pub(crate) head: Arc<Segment<T>>,
     pub(crate) retained: VecDeque<Arc<Segment<T>>>,
     pub(crate) retained_segments: usize,
+}
+
+impl<T> Clone for AtomicLog<T> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
+impl<T> From<Writer<T>> for AtomicLog<T> {
+    fn from(writer: Writer<T>) -> Self {
+        writer.log()
+    }
 }
 
 impl<T> AtomicLog<T> {
@@ -66,11 +78,8 @@ impl<T> AtomicLog<T> {
         self.shared.segment_capacity
     }
 
-    pub fn snapshot(&self, max_len: usize) -> Snapshot<T> {
-        Snapshot::new(
-            Arc::clone(&self.shared),
-            min(max_len, self.shared.retained_capacity),
-        )
+    pub fn snapshot(&self) -> Snapshot<T> {
+        Snapshot::new(Arc::clone(&self.shared))
     }
 }
 
