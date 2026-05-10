@@ -1,3 +1,84 @@
+//! A segmented, append-only, zero-copy rolling log for in-process fan-out.
+//!
+//! `atomic-log` provides [`AtomicLog`] and [`Writer`], a low-coordination primitive for
+//! publishing values from one producer to many readers. The intended use case is
+//! state-oriented streaming inside a process: readers care primarily about a recent,
+//! stable view of published data, not guaranteed delivery of every historical update.
+//!
+//! The log is split into fixed-capacity segments. The writer appends values into the
+//! current head segment, publishes them with atomics, and rolls to a new segment when
+//! the head fills. Readers take [`Snapshot`]s, which hold `Arc`s to the backing segments
+//! and expose zero-copy access through flat iteration or per-segment chunk iteration.
+//!
+//! # What This Crate Optimizes For
+//!
+//! - Single-writer, many-reader fan-out
+//! - Atomics-only publication and observation on the core path
+//! - Stable snapshots that do not block the writer
+//! - Zero-copy reads of immutable published values
+//! - Bounded retention through automatic segment reclamation
+//!
+//! # What It Does Not Provide
+//!
+//! - Multi-writer coordination
+//! - Delivery guarantees for every historical value
+//! - Backpressure from readers to the writer
+//! - Persistence or durability
+//! - Exactly-once or must-not-miss event delivery
+//!
+//! If every update matters, use a channel, queue, or durable log instead.
+//!
+//! # Snapshot Semantics
+//!
+//! A [`Snapshot`] is a stable captured view of the currently retained prefix reachable
+//! from the current head at the moment the snapshot is built or refreshed.
+//!
+//! - Readers only observe fully published values.
+//! - Published values are immutable after publication.
+//! - Holding a snapshot keeps its backing segments alive.
+//! - Refresh replaces the snapshot contents with a newer captured view.
+//! - Slow readers may lose continuity across refreshes if older segments have already
+//!   been reclaimed.
+//!
+//! The important distinction is that a single snapshot is internally stable, while
+//! continuity across time is best-effort.
+//!
+//! # Retention Model
+//!
+//! The constructor takes a logical `retained_capacity` and a fixed `segment_capacity`.
+//! The current implementation retains whole segments, so the live window is rounded to
+//! segment boundaries rather than truncated element-by-element. In practice that means
+//! the visible retained history can exceed `retained_capacity` by up to roughly one
+//! extra segment of historical data plus the current head segment.
+//!
+//! # Example
+//!
+//! ```
+//! use atomic_log::AtomicLog;
+//!
+//! let (mut writer, log) = AtomicLog::new(8, 4);
+//!
+//! for value in 0..6 {
+//!     writer.append(value);
+//! }
+//!
+//! let mut snapshot = log.snapshot();
+//! let initial: Vec<_> = snapshot.iter().copied().collect();
+//! assert_eq!(initial, vec![0, 1, 2, 3, 4, 5]);
+//!
+//! writer.append(6);
+//! writer.append(7);
+//! snapshot.refresh();
+//!
+//! let refreshed: Vec<_> = snapshot.iter().copied().collect();
+//! assert_eq!(refreshed, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+//! ```
+//!
+//! # Reading Patterns
+//!
+//! [`Snapshot::iter`] yields a flat `&T` stream across the captured segments.
+//! [`Snapshot::chunks`] yields [`SegmentSlice`] values for consumers that care about
+//! segment-local slices or segment sequence numbers.
 mod log;
 mod segment;
 mod snapshot;

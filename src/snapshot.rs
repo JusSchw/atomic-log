@@ -5,12 +5,21 @@ use std::sync::Arc;
 use crate::log::Shared;
 use crate::segment::Segment;
 
+/// A stable, zero-copy view of the data currently retained by an [`AtomicLog`](crate::AtomicLog).
+///
+/// A snapshot owns `Arc`s to every segment it exposes, so the underlying storage remains
+/// alive for the lifetime of the snapshot. Refreshing a snapshot replaces its contents with
+/// a newer captured view.
 pub struct Snapshot<T> {
     pub(crate) shared: Arc<Shared<T>>,
     len: usize,
     chunks: VecDeque<SnapshotChunk<T>>,
 }
 
+/// A contiguous slice of values that came from one backing segment.
+///
+/// Exposed by [`Snapshot::chunks`] for consumers that want per-segment access or segment
+/// sequence metadata.
 pub struct SegmentSlice<'a, T> {
     sequence: u64,
     values: &'a [T],
@@ -26,6 +35,7 @@ pub struct Iter<'a, T> {
     current: Option<std::slice::Iter<'a, T>>,
 }
 
+/// Iterator over the segment-backed slices in a [`Snapshot`].
 pub struct Chunks<'a, T> {
     chunks: std::collections::vec_deque::Iter<'a, SnapshotChunk<T>>,
 }
@@ -67,6 +77,10 @@ impl<T> Snapshot<T> {
             .sum();
     }
 
+    /// Refreshes the snapshot in place to reflect the current state of the log.
+    ///
+    /// This attempts a cheap same-head extension first, then an incremental segment append,
+    /// and falls back to a full rebuild if continuity has been lost.
     pub fn refresh(&mut self) {
         let head = self.shared.head.load_full();
         if self.refresh_same_head(&head) {
@@ -134,14 +148,17 @@ impl<T> Snapshot<T> {
         false
     }
 
+    /// Returns the total number of elements visible through this snapshot.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Returns `true` if the snapshot contains no elements.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Iterates over all visible values as a flat `&T` stream.
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
             chunks: self.chunks.iter(),
@@ -149,12 +166,14 @@ impl<T> Snapshot<T> {
         }
     }
 
+    /// Iterates over the snapshot one backing segment at a time.
     pub fn chunks(&self) -> Chunks<'_, T> {
         Chunks {
             chunks: self.chunks.iter(),
         }
     }
 
+    /// Returns a read handle for the log this snapshot came from.
     pub fn log(&self) -> crate::log::AtomicLog<T> {
         crate::log::AtomicLog {
             shared: Arc::clone(&self.shared),
@@ -163,10 +182,12 @@ impl<T> Snapshot<T> {
 }
 
 impl<'a, T> SegmentSlice<'a, T> {
+    /// Returns the monotonically increasing sequence number of the backing segment.
     pub fn sequence(&self) -> u64 {
         self.sequence
     }
 
+    /// Returns the values captured from this backing segment.
     pub fn values(&self) -> &'a [T] {
         self.values
     }
