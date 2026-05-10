@@ -91,11 +91,13 @@ impl<T> AtomicLog<T> {
     }
 
     /// Returns the configured logical retained capacity, in elements.
+    #[inline]
     pub fn retained_capacity(&self) -> usize {
         self.shared.retained_capacity
     }
 
     /// Returns the fixed segment size, in elements.
+    #[inline]
     pub fn segment_capacity(&self) -> usize {
         self.shared.segment_capacity
     }
@@ -105,6 +107,7 @@ impl<T> AtomicLog<T> {
     /// The snapshot borrows no locks and keeps its backing segments alive through `Arc`
     /// ownership, so readers can iterate over the result without copying values out of the
     /// log.
+    #[inline]
     pub fn snapshot(&self) -> Snapshot<T> {
         Snapshot::new(Arc::clone(&self.shared))
     }
@@ -112,6 +115,7 @@ impl<T> AtomicLog<T> {
 
 impl<T> Writer<T> {
     /// Returns a clonable read handle for this writer's log.
+    #[inline]
     pub fn log(&self) -> AtomicLog<T> {
         AtomicLog {
             shared: Arc::clone(&self.shared),
@@ -119,11 +123,13 @@ impl<T> Writer<T> {
     }
 
     /// Returns the configured logical retained capacity, in elements.
+    #[inline]
     pub fn retained_capacity(&self) -> usize {
         self.shared.retained_capacity
     }
 
     /// Returns the fixed segment size, in elements.
+    #[inline]
     pub fn segment_capacity(&self) -> usize {
         self.shared.segment_capacity
     }

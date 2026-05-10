@@ -53,12 +53,14 @@ impl<T> Snapshot<T> {
 
     fn rebuild(&mut self) {
         let head = self.shared.head.load_full();
-        let mut reversed = Vec::new();
+        let mut reversed = Vec::with_capacity(self.chunks.len().max(1));
         let mut cursor = Some(head);
+        let mut len = 0;
 
         while let Some(segment) = cursor {
             let published = segment.published_len();
             if published > 0 {
+                len += published;
                 reversed.push(SnapshotChunk {
                     segment: Arc::clone(&segment),
                     range: 0..published,
@@ -70,11 +72,7 @@ impl<T> Snapshot<T> {
         reversed.reverse();
         self.chunks.clear();
         self.chunks.extend(reversed);
-        self.len = self
-            .chunks
-            .iter()
-            .map(|chunk| chunk.range.end - chunk.range.start)
-            .sum();
+        self.len = len;
     }
 
     /// Refreshes the snapshot in place to reflect the current state of the log.
@@ -149,16 +147,19 @@ impl<T> Snapshot<T> {
     }
 
     /// Returns the total number of elements visible through this snapshot.
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Returns `true` if the snapshot contains no elements.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Iterates over all visible values as a flat `&T` stream.
+    #[inline]
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
             chunks: self.chunks.iter(),
@@ -167,6 +168,7 @@ impl<T> Snapshot<T> {
     }
 
     /// Iterates over the snapshot one backing segment at a time.
+    #[inline]
     pub fn chunks(&self) -> Chunks<'_, T> {
         Chunks {
             chunks: self.chunks.iter(),
@@ -174,6 +176,7 @@ impl<T> Snapshot<T> {
     }
 
     /// Returns a read handle for the log this snapshot came from.
+    #[inline]
     pub fn log(&self) -> crate::log::AtomicLog<T> {
         crate::log::AtomicLog {
             shared: Arc::clone(&self.shared),
@@ -183,11 +186,13 @@ impl<T> Snapshot<T> {
 
 impl<'a, T> SegmentSlice<'a, T> {
     /// Returns the monotonically increasing sequence number of the backing segment.
+    #[inline]
     pub fn sequence(&self) -> u64 {
         self.sequence
     }
 
     /// Returns the values captured from this backing segment.
+    #[inline]
     pub fn values(&self) -> &'a [T] {
         self.values
     }
@@ -236,6 +241,7 @@ impl<'a, T> Iterator for Chunks<'a, T> {
 }
 
 impl<T> SnapshotChunk<T> {
+    #[inline]
     fn as_slice(&self) -> &[T] {
         self.segment.slice(self.range.clone())
     }

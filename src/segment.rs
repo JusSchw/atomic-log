@@ -25,6 +25,7 @@ impl<T> Segment<T> {
         })
     }
 
+    #[inline]
     pub(crate) fn published_len(&self) -> usize {
         self.published.load(Ordering::Acquire)
     }

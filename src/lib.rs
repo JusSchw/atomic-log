@@ -88,8 +88,8 @@ pub use snapshot::{Chunks, Iter, SegmentSlice, Snapshot};
 
 #[cfg(test)]
 mod tests {
-    use crate::log::AtomicLog;
     use crate::Snapshot;
+    use crate::log::AtomicLog;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
