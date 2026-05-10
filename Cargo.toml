@@ -1,7 +1,16 @@
 [package]
 name = "atomic-log"
 version = "0.1.0"
+authors = ["Justin Schwab"]
+description = "A segmented, zero-copy rolling log for one writer and many readers."
+repository = "https://github.com/JusSchw/atomic-log"
+homepage = "https://github.com/JusSchw/atomic-log"
+documentation = "https://docs.rs/atomic-log"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
 edition = "2024"
+keywords = ["atomic", "log", "snapshot", "concurrency", "streaming"]
+categories = ["concurrency", "data-structures"]
 
 [dependencies]
 arc-swap = "1"
