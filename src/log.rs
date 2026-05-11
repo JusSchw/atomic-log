@@ -157,6 +157,36 @@ impl<T> Writer<T> {
         self.shared.segment_capacity
     }
 
+    /// Appends multiple values to the log.
+    ///
+    /// Values within the same segment are published with a single atomic store rather
+    /// than one per element. Segment rolls are performed as needed, the same as
+    /// [`append`](Self::append).
+    pub fn append_batch(&mut self, values: impl IntoIterator<Item = T>) {
+        let mut iter = values.into_iter().peekable();
+        unsafe {
+            self.shared.writer_state.with_claimed_mut(|state| {
+                while iter.peek().is_some() {
+                    if state.head.published_len() == self.shared.segment_capacity {
+                        let next = Segment::new(
+                            state.head.sequence + 1,
+                            Arc::downgrade(&state.head),
+                            self.shared.segment_capacity,
+                        );
+                        state.retained.push_back(Arc::clone(&next));
+                        while state.retained.len() > state.retained_segments {
+                            state.retained.pop_front();
+                        }
+                        state.head = Arc::clone(&next);
+                        self.shared.head.store(next);
+                    }
+
+                    state.head.push_batch(&mut iter);
+                }
+            });
+        }
+    }
+
     /// Appends one value to the log and publishes it for readers.
     ///
     /// Values are written into the current head segment. If that segment is full, the writer

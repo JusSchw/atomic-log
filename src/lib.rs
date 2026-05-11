@@ -355,6 +355,93 @@ mod tests {
     }
 
     #[test]
+    fn append_batch_produces_same_result_as_sequential_append() {
+        let (mut w_seq, log_seq) = AtomicLog::new_claimed(8, 4);
+        for v in 0..7 {
+            w_seq.append(v);
+        }
+
+        let (mut w_batch, log_batch) = AtomicLog::new_claimed(8, 4);
+        w_batch.append_batch(0..7);
+
+        let seq: Vec<_> = log_seq.snapshot().iter().copied().collect();
+        let batch: Vec<_> = log_batch.snapshot().iter().copied().collect();
+        assert_eq!(seq, batch);
+    }
+
+    #[test]
+    fn append_batch_empty_iterator_is_a_no_op() {
+        let (mut writer, log) = AtomicLog::new_claimed(8, 4);
+        writer.append(1);
+        writer.append_batch(std::iter::empty::<i32>());
+
+        let values: Vec<_> = log.snapshot().iter().copied().collect();
+        assert_eq!(values, vec![1]);
+    }
+
+    #[test]
+    fn append_batch_empty_iterator_on_full_head_does_not_allocate_extra_segment() {
+        // Fill the log exactly to one full segment, then batch-append nothing.
+        // If we incorrectly rolled before checking the iterator, we'd see a second
+        // (empty) segment in the snapshot chunks.
+        let (mut writer, log) = AtomicLog::new_claimed(4, 4);
+        writer.append_batch(0..4);
+        writer.append_batch(std::iter::empty::<i32>());
+
+        let snapshot = log.snapshot();
+        let chunks: Vec<_> = snapshot.chunks().collect();
+        assert_eq!(
+            chunks.len(),
+            1,
+            "expected exactly one segment, got {}",
+            chunks.len()
+        );
+        assert_eq!(chunks[0].values(), &[0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn append_batch_spanning_segment_boundary() {
+        // segment_capacity = 3; batch of 7 should produce three segments: [0,1,2], [3,4,5], [6]
+        let (mut writer, log) = AtomicLog::new_claimed(12, 3);
+        writer.append_batch(0..7);
+
+        let chunks: Vec<_> = log
+            .snapshot()
+            .chunks()
+            .map(|c| (c.sequence(), c.values().to_vec()))
+            .collect();
+
+        assert_eq!(
+            chunks,
+            vec![(0, vec![0, 1, 2]), (1, vec![3, 4, 5]), (2, vec![6])]
+        );
+    }
+
+    #[test]
+    fn append_batch_exactly_fills_current_segment_without_spurious_roll() {
+        let (mut writer, log) = AtomicLog::new_claimed(8, 4);
+        writer.append(0); // head is now 1/4 full
+        writer.append_batch(1..4); // fills it exactly to 4/4
+
+        let snapshot = log.snapshot();
+        let chunks: Vec<_> = snapshot.chunks().collect();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].values(), &[0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn append_batch_interleaves_correctly_with_append() {
+        let (mut writer, log) = AtomicLog::new_claimed(16, 4);
+        writer.append_batch(0..3);
+        writer.append(3);
+        writer.append_batch(4..8);
+        writer.append(8);
+
+        let values: Vec<_> = log.snapshot().iter().copied().collect();
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
     fn log_snapshot_and_writer_conversions_round_trip() {
         let (mut writer, log) = AtomicLog::new_claimed(8, 2);
         for value in 0..5 {

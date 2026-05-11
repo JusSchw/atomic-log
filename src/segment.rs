@@ -40,6 +40,26 @@ impl<T> Segment<T> {
         self.published.store(index + 1, Ordering::Release);
     }
 
+    pub(crate) fn push_batch(&self, values: &mut impl Iterator<Item = T>) -> usize {
+        let start = self.published.load(Ordering::Relaxed);
+        let capacity = self.storage.len();
+        let mut index = start;
+
+        while index < capacity {
+            let Some(value) = values.next() else { break };
+            unsafe {
+                (*self.storage[index].get()).write(value);
+            }
+            index += 1;
+        }
+
+        let written = index - start;
+        if written > 0 {
+            self.published.store(index, Ordering::Release);
+        }
+        written
+    }
+
     pub(crate) fn slice(&self, range: Range<usize>) -> &[T] {
         debug_assert!(range.start <= range.end);
         debug_assert!(range.end <= self.published_len());

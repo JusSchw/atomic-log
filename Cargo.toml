@@ -1,6 +1,6 @@
 [package]
 name = "atomic-log"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Justin Schwab"]
 description = "A segmented, zero-copy rolling log for one writer and many readers."
 repository = "https://github.com/JusSchw/atomic-log"
