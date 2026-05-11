@@ -10,12 +10,13 @@ append-only, segmented, zero-copy on the read side, and uses atomics for publica
 ## At a glance
 
 - Single writer, many readers
-- Atomics-only publication and observation in the core path
+- Low-coordination publication and atomics-only observation on the read path
 - No reader registration
 - Generic over `T`
 - Fixed-size segmented storage
 - Zero-copy snapshots backed by stable segment allocations
 - Automatic reclamation of old segments
+- Reclaimable write access after a writer is dropped
 - Flat iteration and per-segment chunk iteration
 
 ## When to use it
@@ -54,6 +55,8 @@ For those cases, a channel, queue, or durable log is usually the right tool.
 The writer appends values into a fixed-capacity head segment. When that segment fills, a
 new head segment is allocated and published. Readers build `Snapshot<T>` values from the
 current head and iterate over immutable published prefixes of the retained segments.
+The log owns the retained segment chain; a `Writer<T>` is an exclusive append capability
+that can be dropped and later reacquired from the log.
 
 Snapshots are stable:
 
@@ -61,6 +64,7 @@ Snapshots are stable:
 - published values are never mutated again
 - holding a snapshot keeps its backing segments alive
 - readers access `&T` directly from segment storage without copying
+- dropping a writer does not discard retained history
 
 Refreshing a snapshot replaces it with a newer captured view. If a reader falls behind
 beyond the retained history, continuity across refreshes may be lost.
@@ -114,6 +118,7 @@ assert_eq!(chunks, vec![(0, 4), (1, 4)]);
 ## API summary
 
 - `AtomicLog::new(retained_capacity, segment_capacity)` creates a writer and read handle
+- `AtomicLog::try_claim_writer()` recreates a writer if no writer currently exists
 - `Writer::append(value)` publishes one value
 - `AtomicLog::snapshot()` captures a stable read view
 - `Snapshot::refresh()` updates an existing snapshot in place

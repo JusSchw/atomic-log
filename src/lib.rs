@@ -13,10 +13,11 @@
 //! # What This Crate Optimizes For
 //!
 //! - Single-writer, many-reader fan-out
-//! - Atomics-only publication and observation on the core path
+//! - Low-coordination publication and atomics-only observation on the read path
 //! - Stable snapshots that do not block the writer
 //! - Zero-copy reads of immutable published values
 //! - Bounded retention through automatic segment reclamation
+//! - Reclaimable write access while the log owns retained history
 //!
 //! # What It Does Not Provide
 //!
@@ -39,6 +40,7 @@
 //! - Refresh replaces the snapshot contents with a newer captured view.
 //! - Slow readers may lose continuity across refreshes if older segments have already
 //!   been reclaimed.
+//! - Dropping a writer does not discard the log's retained segments.
 //!
 //! The important distinction is that a single snapshot is internally stable, while
 //! continuity across time is best-effort.
@@ -79,6 +81,9 @@
 //! [`Snapshot::iter`] yields a flat `&T` stream across the captured segments.
 //! [`Snapshot::chunks`] yields [`SegmentSlice`] values for consumers that care about
 //! segment-local slices or segment sequence numbers.
+//! [`AtomicLog::try_claim_writer`] recreates a writer after the previous writer has
+//! been dropped.
+mod claim;
 mod log;
 mod segment;
 mod snapshot;
@@ -97,6 +102,8 @@ mod tests {
     #[test]
     fn empty_snapshot_is_empty() {
         let (_writer, log) = AtomicLog::<usize>::new(4, 2);
+
+        assert!(log.is_writer_claimed());
 
         let snapshot = log.snapshot();
 
@@ -218,6 +225,51 @@ mod tests {
         let values: Vec<_> = snapshot.iter().copied().collect();
         assert_eq!(values, vec![0, 1, 2, 3, 4, 5]);
         assert_eq!(snapshot.chunks().count(), 3);
+    }
+
+    #[test]
+    fn writer_drop_preserves_retained_segments_for_refresh() {
+        let (mut writer, log) = AtomicLog::new(8, 2);
+        for value in 0..3 {
+            writer.append(value);
+        }
+        let mut snapshot = log.snapshot();
+
+        for value in 3..8 {
+            writer.append(value);
+        }
+        drop(writer);
+
+        snapshot.refresh();
+
+        let values: Vec<_> = snapshot.iter().copied().collect();
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn writer_can_be_reclaimed_after_drop() {
+        let (mut writer, log) = AtomicLog::new(8, 2);
+        writer.append(1);
+        assert!(log.is_writer_claimed());
+        drop(writer);
+        assert!(!log.is_writer_claimed());
+
+        let mut writer = log
+            .try_claim_writer()
+            .expect("writer claim should be released");
+        assert!(log.is_writer_claimed());
+        writer.append(2);
+
+        let values: Vec<_> = log.snapshot().iter().copied().collect();
+        assert_eq!(values, vec![1, 2]);
+    }
+
+    #[test]
+    fn writer_cannot_be_reclaimed_while_existing_writer_lives() {
+        let (_writer, log) = AtomicLog::<usize>::new(8, 2);
+
+        assert!(log.is_writer_claimed());
+        assert!(log.try_claim_writer().is_none());
     }
 
     #[test]

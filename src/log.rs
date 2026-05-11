@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
+use crate::claim::Claimed;
 use crate::segment::Segment;
 use crate::snapshot::Snapshot;
 
@@ -21,19 +22,19 @@ pub struct AtomicLog<T> {
 /// access across threads, it must add its own external synchronization.
 pub struct Writer<T> {
     pub(crate) shared: Arc<Shared<T>>,
-    pub(crate) state: WriterState<T>,
 }
 
 pub(crate) struct Shared<T> {
     pub(crate) retained_capacity: usize,
     pub(crate) segment_capacity: usize,
     pub(crate) head: ArcSwap<Segment<T>>,
+    writer_state: Claimed<WriterState<T>>,
 }
 
-pub(crate) struct WriterState<T> {
-    pub(crate) head: Arc<Segment<T>>,
-    pub(crate) retained: VecDeque<Arc<Segment<T>>>,
-    pub(crate) retained_segments: usize,
+struct WriterState<T> {
+    head: Arc<Segment<T>>,
+    retained: VecDeque<Arc<Segment<T>>>,
+    retained_segments: usize,
 }
 
 impl<T> Clone for AtomicLog<T> {
@@ -75,15 +76,15 @@ impl<T> AtomicLog<T> {
             retained_capacity,
             segment_capacity,
             head: ArcSwap::from(Arc::clone(&head)),
+            writer_state: Claimed::new_claimed(WriterState {
+                head,
+                retained,
+                retained_segments,
+            }),
         });
 
         let writer = Writer {
             shared: Arc::clone(&shared),
-            state: WriterState {
-                head,
-                retained,
-                retained_segments,
-            },
         };
         let log = Self { shared };
 
@@ -102,6 +103,12 @@ impl<T> AtomicLog<T> {
         self.shared.segment_capacity
     }
 
+    /// Returns `true` if this log currently has a claimed writer.
+    #[inline]
+    pub fn is_writer_claimed(&self) -> bool {
+        self.shared.writer_state.is_claimed()
+    }
+
     /// Captures a stable snapshot of the currently retained data.
     ///
     /// The snapshot borrows no locks and keeps its backing segments alive through `Arc`
@@ -110,6 +117,16 @@ impl<T> AtomicLog<T> {
     #[inline]
     pub fn snapshot(&self) -> Snapshot<T> {
         Snapshot::new(Arc::clone(&self.shared))
+    }
+
+    /// Attempts to claim exclusive write access to this log.
+    ///
+    /// Returns `None` if another [`Writer`] currently exists. Dropping the returned writer
+    /// releases the claim without discarding the log's retained segment state.
+    pub fn try_claim_writer(&self) -> Option<Writer<T>> {
+        self.shared.writer_state.try_claim().then(|| Writer {
+            shared: Arc::clone(&self.shared),
+        })
     }
 }
 
@@ -139,20 +156,30 @@ impl<T> Writer<T> {
     /// Values are written into the current head segment. If that segment is full, the writer
     /// allocates a new head segment, publishes it, and continues there.
     pub fn append(&mut self, value: T) {
-        if self.state.head.published_len() == self.shared.segment_capacity {
-            let next = Segment::new(
-                self.state.head.sequence + 1,
-                Arc::downgrade(&self.state.head),
-                self.shared.segment_capacity,
-            );
-            self.state.head = Arc::clone(&next);
-            self.state.retained.push_back(Arc::clone(&next));
-            while self.state.retained.len() > self.state.retained_segments {
-                self.state.retained.pop_front();
-            }
-            self.shared.head.store(next);
-        }
+        unsafe {
+            self.shared.writer_state.with_claimed_mut(|state| {
+                if state.head.published_len() == self.shared.segment_capacity {
+                    let next = Segment::new(
+                        state.head.sequence + 1,
+                        Arc::downgrade(&state.head),
+                        self.shared.segment_capacity,
+                    );
+                    state.retained.push_back(Arc::clone(&next));
+                    while state.retained.len() > state.retained_segments {
+                        state.retained.pop_front();
+                    }
+                    state.head = Arc::clone(&next);
+                    self.shared.head.store(next);
+                }
 
-        self.state.head.push(value);
+                state.head.push(value);
+            });
+        }
+    }
+}
+
+impl<T> Drop for Writer<T> {
+    fn drop(&mut self) {
+        self.shared.writer_state.release();
     }
 }
