@@ -58,7 +58,7 @@
 //! ```
 //! use atomic_log::AtomicLog;
 //!
-//! let (mut writer, log) = AtomicLog::new(8, 4);
+//! let (mut writer, log) = AtomicLog::new_claimed(8, 4);
 //!
 //! for value in 0..6 {
 //!     writer.append(value);
@@ -101,9 +101,9 @@ mod tests {
 
     #[test]
     fn empty_snapshot_is_empty() {
-        let (_writer, log) = AtomicLog::<usize>::new(4, 2);
+        let log = AtomicLog::<usize>::new(4, 2);
 
-        assert!(log.is_writer_claimed());
+        assert!(!log.is_writer_claimed());
 
         let snapshot = log.snapshot();
 
@@ -113,8 +113,18 @@ mod tests {
     }
 
     #[test]
+    fn new_starts_without_claimed_writer() {
+        let log = AtomicLog::<usize>::new(8, 2);
+
+        assert!(!log.is_writer_claimed());
+        let writer = log.try_claim_writer();
+        assert!(writer.is_some());
+        assert!(log.is_writer_claimed());
+    }
+
+    #[test]
     fn snapshot_returns_full_retained_view() {
-        let (mut writer, log) = AtomicLog::new(5, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(5, 2);
 
         for value in 0..8 {
             writer.append(value);
@@ -128,7 +138,7 @@ mod tests {
 
     #[test]
     fn snapshot_captures_full_retained_view() {
-        let (mut writer, log) = AtomicLog::new(8, 3);
+        let (mut writer, log) = AtomicLog::new_claimed(8, 3);
 
         for value in 0..7 {
             writer.append(value);
@@ -142,7 +152,7 @@ mod tests {
 
     #[test]
     fn chunk_iteration_exposes_segment_sequences() {
-        let (mut writer, log) = AtomicLog::new(6, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(6, 2);
 
         for value in 0..5 {
             writer.append(value);
@@ -159,7 +169,7 @@ mod tests {
 
     #[test]
     fn held_snapshot_remains_stable_after_reclamation() {
-        let (mut writer, log) = AtomicLog::new(3, 1);
+        let (mut writer, log) = AtomicLog::new_claimed(3, 1);
         for value in 0..3 {
             writer.append(value);
         }
@@ -178,7 +188,7 @@ mod tests {
 
     #[test]
     fn refresh_replaces_snapshot_with_latest_view() {
-        let (mut writer, log) = AtomicLog::new(4, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(4, 2);
         for value in 0..4 {
             writer.append(value);
         }
@@ -195,7 +205,7 @@ mod tests {
 
     #[test]
     fn snapshot_refresh_extends_same_head_without_rebuild() {
-        let (mut writer, log) = AtomicLog::new(4, 8);
+        let (mut writer, log) = AtomicLog::new_claimed(4, 8);
         writer.append(0);
         writer.append(1);
         let mut snapshot = log.snapshot();
@@ -211,7 +221,7 @@ mod tests {
 
     #[test]
     fn snapshot_refresh_appends_new_segments_when_continuous() {
-        let (mut writer, log) = AtomicLog::new(5, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(5, 2);
         for value in 0..3 {
             writer.append(value);
         }
@@ -229,7 +239,7 @@ mod tests {
 
     #[test]
     fn writer_drop_preserves_retained_segments_for_refresh() {
-        let (mut writer, log) = AtomicLog::new(8, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(8, 2);
         for value in 0..3 {
             writer.append(value);
         }
@@ -248,7 +258,7 @@ mod tests {
 
     #[test]
     fn writer_can_be_reclaimed_after_drop() {
-        let (mut writer, log) = AtomicLog::new(8, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(8, 2);
         writer.append(1);
         assert!(log.is_writer_claimed());
         drop(writer);
@@ -266,7 +276,7 @@ mod tests {
 
     #[test]
     fn writer_cannot_be_reclaimed_while_existing_writer_lives() {
-        let (_writer, log) = AtomicLog::<usize>::new(8, 2);
+        let (_writer, log) = AtomicLog::<usize>::new_claimed(8, 2);
 
         assert!(log.is_writer_claimed());
         assert!(log.try_claim_writer().is_none());
@@ -284,7 +294,7 @@ mod tests {
         }
 
         {
-            let (mut writer, _log) = AtomicLog::new(10, 8);
+            let (mut writer, _log) = AtomicLog::new_claimed(10, 8);
             for _ in 0..3 {
                 writer.append(CountDrop);
             }
@@ -295,7 +305,7 @@ mod tests {
 
     #[test]
     fn many_readers_can_snapshot_while_writer_appends() {
-        let (mut writer, log) = AtomicLog::new(64, 8);
+        let (mut writer, log) = AtomicLog::new_claimed(64, 8);
         let log = Arc::new(log);
         let stop = Arc::new(AtomicUsize::new(0));
         let mut readers = Vec::new();
@@ -323,7 +333,7 @@ mod tests {
 
     #[test]
     fn writer_can_be_shared_through_a_lock_when_requested() {
-        let (writer, log) = AtomicLog::new(8, 2);
+        let (writer, log) = AtomicLog::new_claimed(8, 2);
         let writer = std::sync::Arc::new(std::sync::Mutex::new(writer));
 
         let first = {
@@ -346,7 +356,7 @@ mod tests {
 
     #[test]
     fn log_snapshot_and_writer_conversions_round_trip() {
-        let (mut writer, log) = AtomicLog::new(8, 2);
+        let (mut writer, log) = AtomicLog::new_claimed(8, 2);
         for value in 0..5 {
             writer.append(value);
         }

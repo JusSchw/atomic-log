@@ -86,7 +86,7 @@ snapshots.
 ```rust
 use atomic_log::AtomicLog;
 
-let (mut writer, log) = AtomicLog::new(8, 4);
+let (mut writer, log) = AtomicLog::new_claimed(8, 4);
 
 for value in 0..6 {
     writer.append(value);
@@ -117,7 +117,8 @@ assert_eq!(chunks, vec![(0, 4), (1, 4)]);
 
 ## API summary
 
-- `AtomicLog::new(retained_capacity, segment_capacity)` creates a writer and read handle
+- `AtomicLog::new(retained_capacity, segment_capacity)` creates an unclaimed log
+- `AtomicLog::new_claimed(retained_capacity, segment_capacity)` creates a writer and read handle
 - `AtomicLog::try_claim_writer()` recreates a writer if no writer currently exists
 - `Writer::append(value)` publishes one value
 - `AtomicLog::snapshot()` captures a stable read view

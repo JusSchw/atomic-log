@@ -52,7 +52,7 @@ impl<T> From<Writer<T>> for AtomicLog<T> {
 }
 
 impl<T> AtomicLog<T> {
-    /// Creates a new log and its corresponding writer.
+    /// Creates a new log without claiming a writer.
     ///
     /// `retained_capacity` is the target logical retention size in elements. The current
     /// implementation retains whole segments, so the observed window may exceed this value.
@@ -63,7 +63,7 @@ impl<T> AtomicLog<T> {
     /// # Panics
     ///
     /// Panics if either capacity is zero.
-    pub fn new(retained_capacity: usize, segment_capacity: usize) -> (Writer<T>, Self) {
+    pub fn new(retained_capacity: usize, segment_capacity: usize) -> Self {
         assert!(retained_capacity > 0, "retained capacity must be non-zero");
         assert!(segment_capacity > 0, "segment capacity must be non-zero");
 
@@ -76,18 +76,23 @@ impl<T> AtomicLog<T> {
             retained_capacity,
             segment_capacity,
             head: ArcSwap::from(Arc::clone(&head)),
-            writer_state: Claimed::new_claimed(WriterState {
+            writer_state: Claimed::new_unclaimed(WriterState {
                 head,
                 retained,
                 retained_segments,
             }),
         });
 
-        let writer = Writer {
-            shared: Arc::clone(&shared),
-        };
-        let log = Self { shared };
+        Self { shared }
+    }
 
+    /// Creates a new log and immediately claims its writer.
+    #[inline]
+    pub fn new_claimed(retained_capacity: usize, segment_capacity: usize) -> (Writer<T>, Self) {
+        let log = Self::new(retained_capacity, segment_capacity);
+        let writer = log
+            .try_claim_writer()
+            .expect("freshly constructed log must allow claiming a writer");
         (writer, log)
     }
 
@@ -123,6 +128,7 @@ impl<T> AtomicLog<T> {
     ///
     /// Returns `None` if another [`Writer`] currently exists. Dropping the returned writer
     /// releases the claim without discarding the log's retained segment state.
+    #[inline]
     pub fn try_claim_writer(&self) -> Option<Writer<T>> {
         self.shared.writer_state.try_claim().then(|| Writer {
             shared: Arc::clone(&self.shared),
